@@ -4,8 +4,8 @@
 //
 //   Type a country, ⏎ to guess (Tab completes, ↑↓ pick a suggestion, Esc clears). Every guess is coloured by its
 //   border-to-border distance from the mystery country: dark red = touching, pale yellow = far. Drag the globe to spin,
-//   scroll to zoom, click a guess to fly to it. One daily country (same for the whole day, no repeats for 198 days);
-//   ∞ NEW = endless practice rounds that don't touch the stats. ? GIVE UP appears after 3 guesses.
+//   + / − (or scroll) to zoom, click a guess to fly to it. The first round of the day is the daily country (same all day); ↻ NEW
+//   starts a fresh random round any time — mid-round too — and every round counts. ? GIVE UP appears after 3 guesses.
 //   Data: Natural Earth 1:50m via world-atlas (public domain) — 198 countries, distances pre-computed from the outlines.
 //
 // Default spot: WIDGET//CTL col 4 row 0 → fallback top 40, right 1008. Drag it anywhere with WIDGET//CTL.
@@ -185,7 +185,7 @@ const S = {
   practice: null,                      // { answer, guesses, won, gaveUp }
   stats: { played: 0, wins: 0, streak: 0, maxStreak: 0, lastWin: "", total: 0 },
   q: "", sel: 0, msg: "",
-  rot: [-10, -30], zoom: 1, target: null, drag: null, canvas: null, f: 0, dispatch: null,
+  rot: [-10, 30], zoom: 1, target: null, drag: null, canvas: null, f: 0, dispatch: null,
 };
 const bump = () => { S.f++; if (S.dispatch) S.dispatch({ type: "FRAME", f: S.f }); };
 const game = () => (S.mode === "daily" ? S.daily : S.practice);
@@ -215,15 +215,11 @@ const rollDay = () => {
   if (k !== S.day) { S.day = k; S.daily = { guesses: [], won: false, gaveUp: false }; if (S.mode === "daily") S.msg = "NEW DAY · NEW COUNTRY"; }
 };
 
-const finishDaily = (won) => {
+const finishRound = (won) => {   // every round counts; 🔥 = wins in a row
   const st = S.stats;
-  st.played++; st.total += S.daily.guesses.length;
-  if (won) {
-    st.wins++;
-    const y = new Date(); y.setDate(y.getDate() - 1);
-    st.streak = st.lastWin === dayKey(y) ? st.streak + 1 : 1;
-    st.lastWin = S.day; st.maxStreak = Math.max(st.maxStreak, st.streak);
-  } else st.streak = 0;
+  st.played++; st.total += game().guesses.length;
+  if (won) { st.wins++; st.streak++; st.lastWin = S.day; st.maxStreak = Math.max(st.maxStreak, st.streak); }
+  else st.streak = 0;
 };
 
 const guess = (i) => {
@@ -234,26 +230,28 @@ const guess = (i) => {
   const a = answer(), km = dist(i, a);
   if (i === a) {
     g.won = true; S.msg = `★ ${GEO.names[a].toUpperCase()} IN ${g.guesses.length}`;
-    if (S.mode === "daily") finishDaily(true);
+    finishRound(true);
   } else {
     const best = Math.min.apply(null, g.guesses.map((x) => dist(x, a)));
     S.msg = km === 0 ? "BORDERS THE MYSTERY COUNTRY" : km <= best ? `CLOSEST YET · ${km.toLocaleString("en")} KM` : `${km.toLocaleString("en")} KM AWAY`;
   }
   focus(i === a ? a : i);
-  if (S.mode === "daily") save();
+  save();
 };
 
 const giveUp = () => {
   const g = game(); if (g.won || g.gaveUp) return;
   g.gaveUp = true; S.msg = `IT WAS ${GEO.names[answer()].toUpperCase()}`;
-  if (S.mode === "daily") { finishDaily(false); save(); }
+  finishRound(false); save();
   focus(answer());
 };
 
 const newPractice = () => {
-  let a; do { a = Math.floor(Math.random() * N); } while (a === dailyAnswer(S.day));
+  const prev = answer();
+  let a; do { a = Math.floor(Math.random() * N); } while (a === prev || a === dailyAnswer(S.day));
   S.mode = "practice"; S.practice = { answer: a, guesses: [], won: false, gaveUp: false };
-  S.msg = "PRACTICE · NOT COUNTED"; S.q = ""; S.sel = 0;
+  S.msg = "NEW ROUND · GUESS ANY COUNTRY"; S.q = ""; S.sel = 0;
+  focus(Math.floor(Math.random() * N)); bump();
 };
 const toDaily = () => { S.mode = "daily"; S.msg = ""; S.q = ""; S.sel = 0; };
 
@@ -261,7 +259,7 @@ const toDaily = () => { S.mode = "daily"; S.msg = ""; S.q = ""; S.sel = 0; };
 const R = Math.PI / 180, CW = 194, CH = 140, DPR = 2;
 const focus = (i, instant) => {
   const [lon, lat] = GEO.centre[i];
-  S.target = [-lon, -Math.max(-60, Math.min(60, lat))];
+  S.target = [-lon, Math.max(-60, Math.min(60, lat))];   // rot[1] is the centre latitude itself (not its negative)
   if (instant) { S.rot = S.target.slice(); S.target = null; }
   kick();
 };
@@ -342,10 +340,11 @@ const onDown = (e) => { S.drag = { x: e.clientX, y: e.clientY, rot: S.rot.slice(
 const onMove = (e) => {
   if (!S.drag) return;
   const k = 0.55 / S.zoom;
-  S.rot = [S.drag.rot[0] + (e.clientX - S.drag.x) * k, Math.max(-85, Math.min(85, S.drag.rot[1] - (e.clientY - S.drag.y) * k))];
+  S.rot = [S.drag.rot[0] + (e.clientX - S.drag.x) * k, Math.max(-85, Math.min(85, S.drag.rot[1] + (e.clientY - S.drag.y) * k))];
   paint();
 };
 const onUp = () => { S.drag = null; };
+const zoomBy = (f) => { S.zoom = Math.max(1, Math.min(6, S.zoom * f)); paint(); bump(); };
 const onWheel = (e) => { e.preventDefault(); S.zoom = Math.max(1, Math.min(6, S.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); paint(); };
 
 // ───────── input ─────────
@@ -358,6 +357,7 @@ const onKey = (e) => {
   if (e.key === "Escape") { S.q = ""; e.target.value = ""; S.sel = 0; e.target.blur(); bump(); return; }
   if (e.key === "Enter") {
     e.preventDefault();
+    if (game().won || game().gaveUp) { newPractice(); e.target.value = ""; return; }   // round over → ⏎ = next round
     if (!S.q.trim()) return;
     const pick = sug[S.sel] !== undefined ? sug[S.sel] : sug[0];
     if (pick === undefined) { S.msg = `NO COUNTRY "${S.q.toUpperCase().slice(0, 14)}"`; bump(); return; }
@@ -398,8 +398,8 @@ export const render = ({ output }, dispatch) => {
   setTimeout(paint, 0);
 
   const g = game(), a = answer(), done = g.won || g.gaveUp;
-  const col = g.won ? C : g.gaveUp ? RED : S.mode === "practice" ? AMBER : C;
-  const head = S.mode === "daily" ? `#${dayNo(S.day) + 1} · ${g.guesses.length} GUESS${g.guesses.length === 1 ? "" : "ES"}` : `PRACTICE · ${g.guesses.length}`;
+  const col = g.won ? C : g.gaveUp ? RED : C;
+  const head = S.mode === "daily" ? `#${dayNo(S.day) + 1} · ${g.guesses.length} GUESS${g.guesses.length === 1 ? "" : "ES"}` : `ROUND · ${g.guesses.length} GUESS${g.guesses.length === 1 ? "" : "ES"}`;
   const sug = S.q ? match(S.q).filter((i) => g.guesses.indexOf(i) < 0).slice(0, 4) : [];
   const rows = g.guesses.map((i) => ({ i, km: dist(i, a) })).sort((x, y) => x.km - y.km || (x.i === a ? -1 : 1));
   const st = S.stats;
@@ -426,12 +426,18 @@ export const render = ({ output }, dispatch) => {
       <canvas ref={setCanvas} width={CW * DPR} height={CH * DPR}
         onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp} onWheel={onWheel}
         style={{ position: "relative", width: CW, height: CH, flexShrink: 0, cursor: S.drag ? "grabbing" : "grab" }} />
+      {/* zoom: + / − (scroll works too) */}
+      <div style={{ position: "absolute", top: 46, right: 22, display: "flex", flexDirection: "column", gap: 3, zIndex: 3 }}>
+        <span className="gg-z" onClick={() => zoomBy(1.4)} style={{ cursor: "pointer", userSelect: "none", width: 15, height: 15, lineHeight: "14px", textAlign: "center", fontSize: 11, color: C, background: `rgba(${T.bg},0.8)`, border: `1px solid ${C}55` }}>+</span>
+        <span className="gg-z" onClick={() => zoomBy(1 / 1.4)} style={{ cursor: "pointer", userSelect: "none", width: 15, height: 15, lineHeight: "14px", textAlign: "center", fontSize: 11, color: C, background: `rgba(${T.bg},0.8)`, border: `1px solid ${C}55` }}>−</span>
+        {S.zoom > 1 && <span className="gg-z" onClick={() => zoomBy(1 / 99)} title="Reset zoom" style={{ cursor: "pointer", userSelect: "none", width: 15, height: 15, lineHeight: "14px", textAlign: "center", fontSize: 8, color: DIM, background: `rgba(${T.bg},0.8)`, border: `1px solid ${DIM}55` }}>1×</span>}
+      </div>
 
       {/* input + suggestions */}
       <div style={{ position: "relative", flexShrink: 0, marginTop: 4 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${C}${done ? "22" : "55"}`, background: W_INSET(), padding: "4px 7px", fontSize: 9.5, letterSpacing: 0.5 }}>
           <span style={{ color: C }}>›</span>
-          <input className="gg-in" disabled={done} placeholder={done ? (S.mode === "daily" ? "COME BACK TOMORROW" : "∞ FOR ANOTHER") : "TYPE A COUNTRY ⏎"}
+          <input className="gg-in" placeholder={done ? "⏎ FOR A NEW ROUND" : "TYPE A COUNTRY ⏎"}
             defaultValue={S.q} onInput={onInput} onKeyDown={onKey} spellCheck={false} autoComplete="off"
             style={{ color: T.text }} />
         </div>
@@ -469,8 +475,7 @@ export const render = ({ output }, dispatch) => {
         <span>🔥{st.streak} · {st.wins}/{st.played}</span>
         <span style={{ display: "flex", gap: 8 }}>
           {!done && g.guesses.length >= 3 && link("? GIVE UP", giveUp, RED)}
-          {S.mode === "practice" ? link("◷ DAILY", toDaily, C) : null}
-          {link("∞ NEW", newPractice, S.mode === "practice" ? AMBER : DIM)}
+          {link("↻ NEW", newPractice, done ? C : DIM)}
         </span>
       </div>
     </div>
